@@ -1,0 +1,140 @@
+name: Build custom mangosd (TBC)
+
+# Runs every time you push changes from GitHub Desktop, or by hand from the Actions tab.
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish the "latest" release that the install .bat downloads
+
+env:
+  # Exact versions your SPP Classics V2 server was built from (mangosd.exe, January 2026),
+  # so the new mangosd.exe works with your existing databases.
+  CORE_REPO: https://github.com/celguar/mangos-tbc
+  CORE_SHA: dc002172a1a0025c4f8f4b1df45f21ad22ab9ca4
+  BOTS_REPO: https://github.com/cmangos/playerbots
+  BOTS_SHA: bd8b15ccdfd2cc07365df2795cbc986becd0e9c3
+  BUILD_TYPE: RelWithDebInfo
+  BOOST_VERSION: "1.86.0"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 300
+    steps:
+      - name: Get build recipe (this repository)
+        uses: actions/checkout@v4
+        with:
+          path: recipe
+
+      - name: Get pinned sources
+        shell: bash
+        run: |
+          set -e
+          fetch() {  # fetch <repo> <sha> <dir>
+            mkdir -p "$3"; cd "$3"
+            git init -q
+            git remote add origin "$1"
+            git fetch -q --depth 1 origin "$2"
+            git checkout -q FETCH_HEAD
+            cd "$GITHUB_WORKSPACE"
+          }
+          fetch "$CORE_REPO" "$CORE_SHA" core
+          fetch "$BOTS_REPO" "$BOTS_SHA" core/src/modules/PlayerBots
+          fetch https://github.com/flekz-games/cmangos-modules  c01836e2fb463a22b5217b64d07a3008b6998da2 modcfg
+          fetch https://github.com/flekz-games/cmangos-immersive c5e450a9c6cadf152e39ace18149cd1bc66b066a core/src/modules/immersive
+          fetch https://github.com/flekz-games/cmangos-achievements 89dc3868c8e2fed7526ecd0db7d93ba6d0dc5917 core/src/modules/achievements
+          fetch https://github.com/flekz-games/cmangos-hardcore fe5033afe516f10501bea515d1b8e8b4dd0933fa core/src/modules/hardcore
+          fetch https://github.com/flekz-games/cmangos-dualspec b211cbab0ee6767a065e0817507aaaa045550651 core/src/modules/dualspec
+          fetch https://github.com/flekz-games/cmangos-transmog 0abf98b38e80724b5a2847b029ccf72e09d98ef2 core/src/modules/transmog
+          fetch https://github.com/celguar/cmangos-boost 1950c42156109df91e6c3d7b8f349652be600e73 core/src/modules/boost
+          fetch https://github.com/celguar/cmangos-barber 5f214bebabfd147a150133986756b57540d5de0e core/src/modules/barber
+          fetch https://github.com/flekz-games/cmangos-trainingdummies d00323521680b76eebbe03d9c498c84ec85e7bbf core/src/modules/trainingdummies
+
+      - name: Apply our changes (patches folder)
+        shell: bash
+        run: |
+          set -e
+          apply() {  # apply <patch folder> <source dir>
+            for p in "$GITHUB_WORKSPACE/recipe/patches/$1"/*.patch; do
+              [ -e "$p" ] || continue
+              echo "Applying $(basename "$p") to $2"
+              git -C "$2" apply --whitespace=nowarn --ignore-whitespace "$p"
+            done
+          }
+          apply core core
+          apply playerbots core/src/modules/PlayerBots
+          for d in recipe/patches/modules/*/; do
+            [ -d "$d" ] || continue
+            apply "modules/$(basename "$d")" "core/src/modules/$(basename "$d")"
+          done
+
+      - name: Cache boost
+        uses: actions/cache@v4
+        id: cache-boost
+        with:
+          path: ${{ github.workspace }}/bin/boost
+          key: ${{ runner.os }}-boost-${{ env.BOOST_VERSION }}
+
+      - name: Install boost
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        uses: MarkusJx/install-boost@v2.3.0
+        with:
+          boost_version: ${{ env.BOOST_VERSION }}
+          toolset: msvc
+          platform_version: 2022
+          boost_install_dir: ${{ github.workspace }}/bin
+
+      - name: Configure
+        env:
+          BOOST_ROOT: ${{ github.workspace }}/bin/boost/boost
+        shell: bash
+        run: >
+          cmake -S core -B build
+          -DBUILD_PLAYERBOTS=ON -DBUILD_AHBOT=ON -DBUILD_GIT_ID=ON -DBUILD_LOGIN_SERVER=OFF -DBUILD_EXTRACTORS=OFF
+          -DBUILD_MODULES=ON -DBUILD_MODULE_ACHIEVEMENTS=ON -DBUILD_MODULE_DUALSPEC=ON -DBUILD_MODULE_HARDCORE=ON
+          -DBUILD_MODULE_IMMERSIVE=ON -DBUILD_MODULE_TRANSMOG=ON -DBUILD_MODULE_BOOST=ON -DBUILD_MODULE_BARBER=ON
+          -DBUILD_MODULE_TRAININGDUMMIES=ON
+          -DFETCHCONTENT_SOURCE_DIR_MODULES="$GITHUB_WORKSPACE/modcfg"
+          -DFETCHCONTENT_SOURCE_DIR_PLAYERBOTS="$GITHUB_WORKSPACE/core/src/modules/PlayerBots"
+          -DFETCHCONTENT_SOURCE_DIR_IMMERSIVE="$GITHUB_WORKSPACE/core/src/modules/immersive"
+          -DFETCHCONTENT_SOURCE_DIR_ACHIEVEMENTS="$GITHUB_WORKSPACE/core/src/modules/achievements"
+          -DFETCHCONTENT_SOURCE_DIR_HARDCORE="$GITHUB_WORKSPACE/core/src/modules/hardcore"
+          -DFETCHCONTENT_SOURCE_DIR_DUALSPEC="$GITHUB_WORKSPACE/core/src/modules/dualspec"
+          -DFETCHCONTENT_SOURCE_DIR_TRANSMOG="$GITHUB_WORKSPACE/core/src/modules/transmog"
+          -DFETCHCONTENT_SOURCE_DIR_BOOST="$GITHUB_WORKSPACE/core/src/modules/boost"
+          -DFETCHCONTENT_SOURCE_DIR_BARBER="$GITHUB_WORKSPACE/core/src/modules/barber"
+          -DFETCHCONTENT_SOURCE_DIR_TRAININGDUMMIES="$GITHUB_WORKSPACE/core/src/modules/trainingdummies"
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --target mangosd -- /m
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          out="build/bin/x64_${BUILD_TYPE}"
+          ls "$out"
+          mkdir -p pkg
+          cp "$out/mangosd.exe" pkg/
+          [ -f "$out/mangosd.pdb" ] && cp "$out/mangosd.pdb" pkg/ || true
+          git -C recipe log -1 --format='Built from recipe commit %H (%s)' > pkg/build-info.txt
+          ls recipe/patches/*/ recipe/patches/modules/*/ 2>/dev/null >> pkg/build-info.txt || true
+          cd pkg && 7z a -tzip ../mangosd-custom.zip mangosd.exe build-info.txt
+
+      - name: Keep a copy on the run page
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangosd-custom
+          path: mangosd-custom.zip
+
+      - name: Publish as the "latest" release (the install .bat downloads this)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest custom mangosd
+          body: Built automatically from the patches folder. Run Install_Cloud_Build.bat to install it.
+          files: mangosd-custom.zip
+          make_latest: true
