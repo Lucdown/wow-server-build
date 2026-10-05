@@ -72,25 +72,18 @@ jobs:
             apply "modules/$(basename "$d")" "core/src/modules/$(basename "$d")"
           done
 
-      - name: Cache boost
-        uses: actions/cache@v4
-        id: cache-boost
-        with:
-          path: ${{ github.workspace }}/bin/boost
-          key: ${{ runner.os }}-boost-${{ env.BOOST_VERSION }}
-
       - name: Install boost
-        if: steps.cache-boost.outputs.cache-hit != 'true'
-        uses: MarkusJx/install-boost@v2.3.0
+        id: install-boost
+        uses: MarkusJx/install-boost@v2.6.0
         with:
           boost_version: ${{ env.BOOST_VERSION }}
           toolset: msvc
           platform_version: 2022
-          boost_install_dir: ${{ github.workspace }}/bin
+          arch: x86
 
       - name: Configure
         env:
-          BOOST_ROOT: ${{ github.workspace }}/bin/boost/boost
+          BOOST_ROOT: ${{ steps.install-boost.outputs.BOOST_ROOT }}
         shell: bash
         run: >
           cmake -S core -B build
