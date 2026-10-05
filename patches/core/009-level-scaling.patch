@@ -1,0 +1,42 @@
+diff --git a/src/game/Entities/Unit.cpp b/src/game/Entities/Unit.cpp
+index 532a8c8..6b72f31 100644
+--- a/src/game/Entities/Unit.cpp
++++ b/src/game/Entities/Unit.cpp
+@@ -30,6 +30,7 @@
+ #include "Entities/Creature.h"
+ #include "Spells/Spell.h"
+ #include "Groups/Group.h"
++#include "Config/Config.h"
+ #include <algorithm>
+ #include "Spells/SpellAuras.h"
+ #include "Globals/ObjectAccessor.h"
+@@ -8431,6 +8432,29 @@ void Unit::SetInCombatState(bool PvP, Unit* enemy)
+     if (!IsAlive())
+         return;
+ 
++    // Alteroth level scaling (mangosd.conf: Alteroth.LevelScaling = 1): a creature far below a real player's level
++    // is raised to (player level - Alteroth.LevelScaling.Gap) when the fight starts. Rares and bosses are left alone.
++    if (enemy && GetTypeId() == TYPEID_UNIT && !HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IN_COMBAT))
++    {
++        static bool scalingEnabled = sConfig.GetBoolDefault("Alteroth.LevelScaling", false);
++        static uint32 scalingGap = sConfig.GetIntDefault("Alteroth.LevelScaling.Gap", 2);
++        Creature* creature = static_cast<Creature*>(this);
++        Player* foe = enemy->GetBeneficiaryPlayer();
++        if (scalingEnabled && foe && foe->isRealPlayer() && !creature->IsPet() && !creature->IsTotem() &&
++            !creature->IsWorldBoss() && !HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_PLAYER_CONTROLLED) && creature->GetOwnerGuid().IsEmpty())
++        {
++            CreatureInfo const* info = creature->GetCreatureInfo();
++            uint32 rank = info ? info->Rank : 0;
++            uint32 target = foe->GetLevel() > scalingGap ? foe->GetLevel() - scalingGap : 1;
++            if ((rank == 0 || rank == 1) && GetLevel() < target)
++            {
++                float healthPct = GetHealthPercent();
++                creature->SelectLevel(target);
++                SetHealthPercent(healthPct);
++            }
++        }
++    }
++
+     bool notInCombat = !HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IN_COMBAT);
+     bool creatureNotInCombat = GetTypeId() == TYPEID_UNIT && notInCombat;
+ 

@@ -1,0 +1,25 @@
+diff --git a/src/game/Entities/Unit.cpp b/src/game/Entities/Unit.cpp
+index 8798d27..532a8c8 100644
+--- a/src/game/Entities/Unit.cpp
++++ b/src/game/Entities/Unit.cpp
+@@ -2441,6 +2441,20 @@ void Unit::DealMeleeDamage(CalcDamageInfo* calcDamageInfo, bool durabilityLoss)
+ 
+                 uint32 damage = (*i)->GetModifier()->m_amount;
+ 
++                // Alteroth: damage shields (Retribution Aura, Thorns, ...) scale with the caster's spell power and
++                // attack power using the spell's bonus coefficients from spell_template
++                if (Unit* shieldCaster = (*i)->GetCaster())
++                {
++                    SpellEffectIndex effIdx = (*i)->GetEffIndex();
++                    float bonus = 0.0f;
++                    if (spellProto->effectBonusCoefficient[effIdx] > 0.0f)
++                        bonus += shieldCaster->SpellBaseDamageBonusDone(GetSpellSchoolMask(spellProto)) * spellProto->effectBonusCoefficient[effIdx];
++                    if (spellProto->effectBonusCoefficientFromAP[effIdx] > 0.0f)
++                        bonus += shieldCaster->GetTotalAttackPowerValue(BASE_ATTACK) * spellProto->effectBonusCoefficientFromAP[effIdx];
++                    if (bonus > 0.0f)
++                        damage += uint32(bonus);
++                }
++
+                 if (victim->GetTypeId() == TYPEID_PLAYER)
+                     ((Player*)victim)->ApplySpellMod(spellProto->Id, SPELLMOD_DAMAGE, damage);
+ 

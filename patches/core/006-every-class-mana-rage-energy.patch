@@ -1,0 +1,122 @@
+diff --git a/src/game/Entities/Player.cpp b/src/game/Entities/Player.cpp
+index 0f78fb1..7f5b8a1 100644
+--- a/src/game/Entities/Player.cpp
++++ b/src/game/Entities/Player.cpp
+@@ -1585,6 +1585,8 @@ void Player::Update(const uint32 diff)
+             RegenerateAll(m_regenTimer / 100 * 100);
+     }
+ 
++    SendAltPowerUpdate(diff);
++
+     if (m_deathState == JUST_DIED)
+         KillPlayer();
+ 
+@@ -2398,6 +2400,35 @@ void Player::RewardRage(uint32 damage, uint32 weaponSpeedHitFactor, bool attacke
+     ModifyPower(POWER_RAGE, uint32(addRage * 10));
+ }
+ 
++void Player::SendAltPowerUpdate(uint32 diff)
++{
++    // Alteroth: the 2.4.3 client can only show one power bar, so tell the AlterPower addon about all three
++    if (!isRealPlayer() || !GetSession())
++        return;
++
++    if (m_altPowerTimer > diff)
++    {
++        m_altPowerTimer -= diff;
++        return;
++    }
++    m_altPowerTimer = 400;
++
++    uint32 mana = GetPower(POWER_MANA), manaMax = GetMaxPower(POWER_MANA);
++    uint32 rage = GetPower(POWER_RAGE) / 10, rageMax = GetMaxPower(POWER_RAGE) / 10;
++    uint32 energy = GetPower(POWER_ENERGY), energyMax = GetMaxPower(POWER_ENERGY);
++    uint32 sig = mana * 2654435761u ^ manaMax * 40503u ^ rage * 97u ^ rageMax * 389u ^ energy * 7919u ^ energyMax;
++    if (sig == m_altPowerSig && ++m_altPowerIdle < 12)
++        return;
++    m_altPowerSig = sig;
++    m_altPowerIdle = 0;
++
++    char buf[96];
++    snprintf(buf, sizeof(buf), "ALTPWR\t%u;%u;%u;%u;%u;%u;%u", mana, manaMax, rage, rageMax, energy, energyMax, uint32(GetPowerType()));
++    WorldPacket data;
++    ChatHandler::BuildChatPacket(data, CHAT_MSG_WHISPER, buf, LANG_ADDON, CHAT_TAG_NONE, GetObjectGuid(), GetName());
++    GetSession()->SendPacket(data);
++}
++
+ void Player::RegenerateAll(uint32 diff)
+ {
+     // Not in combat or they have regeneration
+diff --git a/src/game/Entities/Player.h b/src/game/Entities/Player.h
+index 8f88245..30a7c67 100644
+--- a/src/game/Entities/Player.h
++++ b/src/game/Entities/Player.h
+@@ -2247,6 +2247,11 @@ class Player : public Unit
+         PlayerbotMgr* GetPlayerbotMgr() { return m_playerbotMgr.get(); }
+         void SetBotDeathTimer() { m_deathTimer = 0; }
+         bool isRealPlayer() const  { return m_session && (m_session->GetRemoteAddress() != "disconnected/bot"); }
++        // Alteroth: AlterPower addon updates (mana / rage / energy for every class)
++        uint32 m_altPowerTimer = 0;
++        uint32 m_altPowerSig = 0;
++        uint32 m_altPowerIdle = 0;
++        void SendAltPowerUpdate(uint32 diff);
+ #endif
+ 
+         virtual UnitAI* AI() override { if (m_charmInfo) return m_charmInfo->GetAI(); return nullptr; }
+diff --git a/src/game/Entities/StatSystem.cpp b/src/game/Entities/StatSystem.cpp
+index 29896aa..787fd2a 100644
+--- a/src/game/Entities/StatSystem.cpp
++++ b/src/game/Entities/StatSystem.cpp
+@@ -234,7 +234,8 @@ void Unit::UpdateMaxPower(Powers power)
+     uint32 create_power = GetCreatePowers(power);
+ 
+     // ignore classes without mana
+-    float bonusPower = (power == POWER_MANA && create_power > 0) ? GetManaBonusFromIntellect() : 0;
++    // Alteroth: intellect gives mana to every player class (warriors and rogues too)
++    float bonusPower = (power == POWER_MANA && (create_power > 0 || GetTypeId() == TYPEID_PLAYER)) ? GetManaBonusFromIntellect() : 0;
+ 
+     float value = GetModifierValue(unitMod, BASE_VALUE) + create_power;
+     value *= GetModifierValue(unitMod, BASE_PCT);
+diff --git a/src/game/Entities/Unit.cpp b/src/game/Entities/Unit.cpp
+index ba183a9..8798d27 100644
+--- a/src/game/Entities/Unit.cpp
++++ b/src/game/Entities/Unit.cpp
+@@ -942,7 +942,7 @@ uint32 Unit::DealDamage(Unit* dealer, Unit* victim, uint32 damage, CleanDamage c
+     if (dealer)
+     {
+         // Rage from Damage made (only from direct weapon damage)
+-        if (cleanDamage && damagetype == DIRECT_DAMAGE && dealer != victim && dealer->GetTypeId() == TYPEID_PLAYER && (dealer->GetPowerType() == POWER_RAGE))
++        if (cleanDamage && damagetype == DIRECT_DAMAGE && dealer != victim && dealer->GetTypeId() == TYPEID_PLAYER) // Alteroth: every class builds rage
+         {
+             uint32 weaponSpeedHitFactor;
+ 
+@@ -1018,7 +1018,7 @@ uint32 Unit::DealDamage(Unit* dealer, Unit* victim, uint32 damage, CleanDamage c
+     if (!damage)
+     {
+         // Rage from physical damage received - extend to all units
+-        if (cleanDamage && cleanDamage->damage && (damageSchoolMask & SPELL_SCHOOL_MASK_NORMAL) && victim->GetTypeId() == TYPEID_PLAYER && (victim->GetPowerType() == POWER_RAGE))
++        if (cleanDamage && cleanDamage->damage && (damageSchoolMask & SPELL_SCHOOL_MASK_NORMAL) && victim->GetTypeId() == TYPEID_PLAYER) // Alteroth: every class builds rage
+             if (cleanDamage->hitOutCome != MELEE_HIT_DODGE && cleanDamage->hitOutCome != MELEE_HIT_PARRY)
+                 static_cast<Player*>(victim)->RewardRage(cleanDamage->damage, 0, false);
+ 
+@@ -1355,7 +1355,7 @@ void Unit::HandleDamageDealt(Unit* dealer, Unit* victim, uint32& damage, CleanDa
+     if (victim->GetTypeId() == TYPEID_PLAYER)                               // victim is a player
+     {
+         // Rage from damage received
+-        if (dealer != victim && victim->GetPowerType() == POWER_RAGE) // player doesnt get rage when he parries
++        if (dealer != victim) // Alteroth: every class builds rage (player doesnt get rage when he parries)
+             if (cleanDamage && cleanDamage->damage && cleanDamage->hitOutCome != MELEE_HIT_DODGE && cleanDamage->hitOutCome != MELEE_HIT_PARRY)
+                 static_cast<Player*>(victim)->RewardRage(cleanDamage->damage, 0, false);
+ 
+@@ -12673,6 +12673,11 @@ float Unit::OCTRegenMPPerSpirit() const
+     // Formula get from PaperDollFrame script
+     float spirit = GetStat(STAT_SPIRIT);
+     float regen = spirit * moreRatio->ratio;
++
++    // Alteroth: every class has a mana pool - warriors and rogues regenerate mana like a paladin
++    if (regen <= 0.0f && GetTypeId() == TYPEID_PLAYER)
++        if (GtRegenMPPerSptEntry const* paladinRatio = sGtRegenMPPerSptStore.LookupEntry((CLASS_PALADIN - 1) * GT_MAX_LEVEL + level - 1))
++            regen = spirit * paladinRatio->ratio;
+     return regen;
+ }
+ 

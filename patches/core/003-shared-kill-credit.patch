@@ -1,0 +1,47 @@
+diff --git a/src/game/Entities/Unit.cpp b/src/game/Entities/Unit.cpp
+index da6a6e9..ba183a9 100644
+--- a/src/game/Entities/Unit.cpp
++++ b/src/game/Entities/Unit.cpp
+@@ -30,6 +30,7 @@
+ #include "Entities/Creature.h"
+ #include "Spells/Spell.h"
+ #include "Groups/Group.h"
++#include <algorithm>
+ #include "Spells/SpellAuras.h"
+ #include "Globals/ObjectAccessor.h"
+ #include "AI/CreatureAISelector.h"
+@@ -1176,6 +1177,34 @@ void Unit::Kill(Unit* killer, Unit* victim, DamageEffectType damagetype, SpellEn
+             tapper->RewardSinglePlayerAtKill(victim);
+     }
+ 
++    // Alteroth: shared kill credit - real players who fought this creature but didn't tag it still get XP and quest credit
++    if (victim->GetTypeId() == TYPEID_UNIT && tapper != victim)
++    {
++        std::vector<Player*> sharers;
++        for (HostileReference* ref : victim->getThreatManager().getThreatList())
++        {
++            Unit* attacker = ref ? ref->getTarget() : nullptr;
++            if (!attacker)
++                continue;
++            Player* sharer = attacker->GetBeneficiaryPlayer();
++            if (!sharer || sharer == tapper || !sharer->isRealPlayer())
++                continue;
++            if (tapperGroup && sharer->GetGroup() == tapperGroup)
++                continue;
++            if (std::find(sharers.begin(), sharers.end(), sharer) == sharers.end())
++                sharers.push_back(sharer);
++        }
++        for (Player* sharer : sharers)
++        {
++            if (!sharer->IsAtGroupRewardDistance(victim))
++                continue;
++            if (Group* sharerGroup = sharer->GetGroup())
++                sharerGroup->RewardGroupAtKill(victim, sharer);
++            else
++                sharer->RewardSinglePlayerAtKill(victim);
++        }
++    }
++
+     /*
+     *  Actions for the killer
+     */

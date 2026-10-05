@@ -1,0 +1,108 @@
+diff --git a/src/game/Chat/Chat.cpp b/src/game/Chat/Chat.cpp
+index 832f040..3d2fe6b 100644
+--- a/src/game/Chat/Chat.cpp
++++ b/src/game/Chat/Chat.cpp
+@@ -591,6 +591,8 @@ ChatCommand* ChatHandler::getCommandTable()
+     static ChatCommand petCommandTable[] =
+     {
+         { "levelloyalty",   SEC_GAMEMASTER,     true,  &ChatHandler::HandlePetLevelLoyaltyCommand,   "", nullptr },
++        { "learn",          SEC_GAMEMASTER,     false, &ChatHandler::HandlePetLearnCommand,          "", nullptr },
++        { "unlearn",        SEC_GAMEMASTER,     false, &ChatHandler::HandlePetUnlearnCommand,        "", nullptr },
+         { nullptr,          0,                  false, nullptr,                                        "", nullptr }
+     };
+ 
+diff --git a/src/game/Chat/Chat.h b/src/game/Chat/Chat.h
+index 4f00206..d72fb49 100644
+--- a/src/game/Chat/Chat.h
++++ b/src/game/Chat/Chat.h
+@@ -835,6 +835,8 @@ class ChatHandler
+         bool HandleSaveAllCommand(char* args);
+ 
+         bool HandlePetLevelLoyaltyCommand(char* args);
++        bool HandlePetLearnCommand(char* args);
++        bool HandlePetUnlearnCommand(char* args);
+ 
+         Player*   getSelectedPlayer() const;
+         Unit*     getSelectedUnit(bool self = true) const;
+diff --git a/src/game/Chat/PetCommands.cpp b/src/game/Chat/PetCommands.cpp
+index 119025c..21fcfb4 100644
+--- a/src/game/Chat/PetCommands.cpp
++++ b/src/game/Chat/PetCommands.cpp
+@@ -18,6 +18,10 @@
+ 
+ #include "Chat/Chat.h"
+ #include "Entities/Pet.h"
++#include "Entities/Player.h"
++#include "Server/SQLStorages.h"
++#include "Tools/Language.h"
++#include "Server/WorldSession.h"
+ 
+ bool ChatHandler::HandlePetLevelLoyaltyCommand(char* args)
+ {
+@@ -43,3 +47,66 @@ bool ChatHandler::HandlePetLevelLoyaltyCommand(char* args)
+     }
+     return true;
+ }
++
++// Alteroth: teach your current pet (or the pet you target) any spell - e.g. ".pet learn 133" gives it Fireball.
++// The pet casts it from its action bar (and automatically if autocast is on). Spells use the pet's own mana.
++bool ChatHandler::HandlePetLearnCommand(char* args)
++{
++    Player* player = m_session ? m_session->GetPlayer() : nullptr;
++    Pet* pet = getSelectedPet();
++    if (!pet && player)
++        pet = player->GetPet();
++    if (!pet)
++    {
++        SendSysMessage("You need an active pet (or target one).");
++        SetSentErrorMessage(true);
++        return false;
++    }
++
++    uint32 spellId = ExtractSpellIdFromLink(&args);
++    if (!spellId || !sSpellTemplate.LookupEntry<SpellEntry>(spellId))
++    {
++        PSendSysMessage(LANG_COMMAND_NOSPELLFOUND);
++        SetSentErrorMessage(true);
++        return false;
++    }
++
++    if (pet->HasSpell(spellId))
++    {
++        SendSysMessage("Your pet already knows that spell.");
++        return true;
++    }
++
++    pet->learnSpell(spellId);
++    pet->SavePetToDB(PET_SAVE_AS_CURRENT, player);
++    PSendSysMessage("Your pet learned spell %u.", spellId);
++    return true;
++}
++
++bool ChatHandler::HandlePetUnlearnCommand(char* args)
++{
++    Player* player = m_session ? m_session->GetPlayer() : nullptr;
++    Pet* pet = getSelectedPet();
++    if (!pet && player)
++        pet = player->GetPet();
++    if (!pet)
++    {
++        SendSysMessage("You need an active pet (or target one).");
++        SetSentErrorMessage(true);
++        return false;
++    }
++
++    uint32 spellId = ExtractSpellIdFromLink(&args);
++    if (!spellId || !pet->HasSpell(spellId))
++    {
++        SendSysMessage("Your pet doesn't know that spell.");
++        SetSentErrorMessage(true);
++        return false;
++    }
++
++    pet->unlearnSpell(spellId, false);
++    if (player)
++        player->PetSpellInitialize();
++    PSendSysMessage("Your pet forgot spell %u.", spellId);
++    return true;
++}

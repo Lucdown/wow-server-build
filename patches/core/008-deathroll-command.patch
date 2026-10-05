@@ -1,0 +1,146 @@
+diff --git a/src/game/Chat/AlterothCommands.cpp b/src/game/Chat/AlterothCommands.cpp
+new file mode 100644
+index 0000000..05ce6b2
+--- /dev/null
++++ b/src/game/Chat/AlterothCommands.cpp
+@@ -0,0 +1,116 @@
++/*
++ * Alteroth: custom player commands.
++ */
++
++#include "Chat/Chat.h"
++#include "Entities/Player.h"
++#include "Server/WorldSession.h"
++#include "Server/WorldPacket.h"
++#include "Server/Opcodes.h"
++#include "Groups/Group.h"
++#include "Util/Util.h"
++
++#include <sstream>
++
++static void AlterothSendRoll(Player* roller, Player* a, Player* b, uint32 maximum, uint32 roll)
++{
++    WorldPacket data(MSG_RANDOM_ROLL, 4 + 4 + 4 + 8);
++    data << uint32(1);
++    data << uint32(maximum);
++    data << uint32(roll);
++    data << roller->GetObjectGuid();
++    a->SendMessageToSet(data, true);
++    (void)b;
++}
++
++// .deathroll <gold> [start]  - target a player or bot standing near you. You both roll 1..N, then 1..(last roll),
++// back and forth. Whoever rolls a 1 loses and the gold moves to the winner automatically.
++bool ChatHandler::HandleDeathRollCommand(char* args)
++{
++    Player* player = m_session ? m_session->GetPlayer() : nullptr;
++    if (!player)
++        return false;
++
++    uint32 gold = 0;
++    if (!ExtractUInt32(&args, gold) || gold == 0)
++    {
++        SendSysMessage("Usage: .deathroll <gold> [starting number, default 1000] - target the player or bot you want to roll against.");
++        SetSentErrorMessage(true);
++        return false;
++    }
++    uint32 start = 1000;
++    ExtractOptUInt32(&args, start, 1000);
++    if (start < 2)
++        start = 2;
++    if (start > 10000)
++        start = 10000;
++
++    Player* opponent = getSelectedPlayer();
++    if (!opponent || opponent == player)
++    {
++        SendSysMessage("Target the player or bot you want to death-roll against first.");
++        SetSentErrorMessage(true);
++        return false;
++    }
++    if (!player->IsWithinDistInMap(opponent, 15.0f))
++    {
++        SendSysMessage("Stand closer - you need to be within 15 yards to death-roll.");
++        SetSentErrorMessage(true);
++        return false;
++    }
++
++    uint32 wager = gold * 10000;
++    if (player->GetMoney() < wager)
++    {
++        SendSysMessage("You don't have that much gold.");
++        SetSentErrorMessage(true);
++        return false;
++    }
++    if (opponent->GetMoney() < wager)
++    {
++        std::ostringstream o;
++        o << "Can't afford " << gold << "g, sorry.";
++        opponent->Say(o.str(), LANG_UNIVERSAL);
++        return true;
++    }
++
++    {
++        std::ostringstream o;
++        o << "Death roll for " << gold << " gold? You're on! Starting at " << start << ".";
++        opponent->Say(o.str(), LANG_UNIVERSAL);
++    }
++
++    Player* roller = player;
++    Player* other = opponent;
++    uint32 maximum = start;
++    for (int safety = 0; safety < 200; ++safety)
++    {
++        uint32 roll = urand(1, maximum);
++        AlterothSendRoll(roller, player, opponent, maximum, roll);
++        if (roll == 1)
++            break;
++        maximum = roll;
++        std::swap(roller, other);
++    }
++
++    // roller rolled the 1 and loses
++    Player* loser = roller;
++    Player* winner = other;
++    loser->ModifyMoney(-int32(wager));
++    winner->ModifyMoney(int32(wager));
++
++    std::ostringstream o;
++    if (winner == player)
++    {
++        o << "Ugh, a one. Here's your " << gold << " gold.";
++        opponent->Say(o.str(), LANG_UNIVERSAL);
++        PSendSysMessage("You won the death roll! +%u gold.", gold);
++    }
++    else
++    {
++        o << "Ha! I'll take that " << gold << " gold.";
++        opponent->Say(o.str(), LANG_UNIVERSAL);
++        PSendSysMessage("You lost the death roll. -%u gold.", gold);
++    }
++    return true;
++}
+diff --git a/src/game/Chat/Chat.cpp b/src/game/Chat/Chat.cpp
+index 3d2fe6b..6719b17 100644
+--- a/src/game/Chat/Chat.cpp
++++ b/src/game/Chat/Chat.cpp
+@@ -1025,6 +1025,7 @@ ChatCommand* ChatHandler::getCommandTable()
+         { "summon",         SEC_MODERATOR,      false, &ChatHandler::HandleNamegoCommand,              "", nullptr },
+         { "groupgo",        SEC_MODERATOR,      false, &ChatHandler::HandleGroupgoCommand,             "", nullptr },
+         { "commands",       SEC_PLAYER,         true,  &ChatHandler::HandleCommandsCommand,            "", nullptr },
++        { "deathroll",      SEC_PLAYER,         false, &ChatHandler::HandleDeathRollCommand,           "", nullptr },
+         { "demorph",        SEC_GAMEMASTER,     false, &ChatHandler::HandleDeMorphCommand,             "", nullptr },
+         { "die",            SEC_ADMINISTRATOR,  false, &ChatHandler::HandleDieCommand,                 "", nullptr },
+         { "revive",         SEC_ADMINISTRATOR,  true,  &ChatHandler::HandleReviveCommand,              "", nullptr },
+diff --git a/src/game/Chat/Chat.h b/src/game/Chat/Chat.h
+index d72fb49..6053b7e 100644
+--- a/src/game/Chat/Chat.h
++++ b/src/game/Chat/Chat.h
+@@ -836,6 +836,7 @@ class ChatHandler
+ 
+         bool HandlePetLevelLoyaltyCommand(char* args);
+         bool HandlePetLearnCommand(char* args);
++        bool HandleDeathRollCommand(char* args);
+         bool HandlePetUnlearnCommand(char* args);
+ 
+         Player*   getSelectedPlayer() const;

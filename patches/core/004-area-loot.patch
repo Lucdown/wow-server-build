@@ -1,0 +1,62 @@
+diff --git a/src/game/Loot/LootHandler.cpp b/src/game/Loot/LootHandler.cpp
+index b2a96b9..9640c93 100644
+--- a/src/game/Loot/LootHandler.cpp
++++ b/src/game/Loot/LootHandler.cpp
+@@ -27,6 +27,23 @@
+ #include "Entities/Object.h"
+ #include "Groups/Group.h"
+ #include "Entities/GameObject.h"
++#include "Entities/Creature.h"
++#include "Grids/GridNotifiers.h"
++#include "Grids/GridNotifiersImpl.h"
++#include "Grids/CellImpl.h"
++
++namespace
++{
++    // Alteroth area loot: dead creatures near the looter
++    struct AlterothDeadCreatureInRange
++    {
++        AlterothDeadCreatureInRange(WorldObject const* obj, float range) : i_obj(obj), i_range(range) {}
++        WorldObject const& GetFocusObject() const { return *i_obj; }
++        bool operator()(Unit* u) const { return u->GetTypeId() == TYPEID_UNIT && !u->IsAlive() && i_obj->IsWithinDistInMap(u, i_range); }
++        WorldObject const* i_obj;
++        float i_range;
++    };
++}
+ 
+ #ifdef ENABLE_MODULES
+ #include "ModuleMgr.h"
+@@ -150,6 +167,33 @@ void WorldSession::HandleLootOpcode(WorldPacket& recv_data)
+         _player->DoLoot();
+ 
+         loot->ShowContentTo(_player);
++
++        // Alteroth area loot: opening one corpse also sweeps every other corpse you may loot within 30 yards
++        // (gold and items go straight into your bags; anything that doesn't fit stays on the corpse)
++        if (lguid.IsCreature() && loot->GetLootType() == LOOT_CORPSE && _player->isRealPlayer())
++        {
++            CreatureList corpses;
++            AlterothDeadCreatureInRange check(_player, 30.0f);
++            MaNGOS::CreatureListSearcher<AlterothDeadCreatureInRange> searcher(corpses, check);
++            Cell::VisitGridObjects(_player, searcher, 30.0f);
++
++            for (Creature* corpse : corpses)
++            {
++                if (corpse->GetObjectGuid() == lguid)
++                    continue;
++                Loot* other = corpse->m_loot;
++                if (!other || other->GetLootType() != LOOT_CORPSE || !other->CanLoot(_player))
++                    continue;
++                if (other->GetGoldAmount())
++                    other->SendGold(_player);           // also releases the corpse if nothing else is left
++                if (corpse->m_loot == other && !other->IsLootedFor(_player))
++                {
++                    other->AutoStore(_player);
++                    if (corpse->m_loot == other)
++                        other->Release(_player);
++                }
++            }
++        }
+     }
+ 
+     // interrupt cast
