@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# patches must keep their exact line endings
+*.patch -text

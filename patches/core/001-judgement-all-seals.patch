@@ -1,0 +1,96 @@
+diff --git a/src/game/Spells/Scripts/Scripting/ClassScripts/Paladin.cpp b/src/game/Spells/Scripts/Scripting/ClassScripts/Paladin.cpp
+index 5d955e3..57d67a4 100644
+--- a/src/game/Spells/Scripts/Scripting/ClassScripts/Paladin.cpp
++++ b/src/game/Spells/Scripts/Scripting/ClassScripts/Paladin.cpp
+@@ -101,49 +101,63 @@ struct spell_judgement : public SpellScript
+ 
+         Unit* caster = spell->GetCaster();
+ 
+-        uint32 spellId2 = 0;
+-
+-        // all seals have aura dummy
+-        Unit::AuraList const& m_dummyAuras = caster->GetAurasByType(SPELL_AURA_DUMMY);
+-        for (auto m_dummyAura : m_dummyAuras)
++        // Alteroth: seals stack, so Judgement unleashes EVERY active seal at once.
++        // Collect first (removing auras while walking the list would invalidate it).
++        std::vector<std::pair<uint32, uint32>> seals; // seal aura spell id -> judgement spell id
++        SpellEntry const* firstSeal = nullptr;
++        Unit::AuraList const& dummyAuras = caster->GetAurasByType(SPELL_AURA_DUMMY);
++        for (auto dummyAura : dummyAuras)
+         {
+-            SpellEntry const* spellInfo = m_dummyAura->GetSpellProto();
++            SpellEntry const* spellInfo = dummyAura->GetSpellProto();
+ 
+             // search seal (all seals have judgement's aura dummy spell id in 2 effect
+-            if (!spellInfo || !IsSealSpell(m_dummyAura->GetSpellProto()) || m_dummyAura->GetEffIndex() != 2)
++            if (!spellInfo || !IsSealSpell(spellInfo) || dummyAura->GetEffIndex() != 2)
+                 continue;
+ 
+             // must be calculated base at raw base points in spell proto, GetModifier()->m_value for S.Righteousness modified by SPELLMOD_DAMAGE
+-            spellId2 = m_dummyAura->GetSpellProto()->CalculateSimpleValue(EFFECT_INDEX_2);
++            uint32 judgementId = spellInfo->CalculateSimpleValue(EFFECT_INDEX_2);
++            if (judgementId <= 1)
++                continue;
+ 
+-            if (spellId2 <= 1)
++            bool known = false;
++            for (auto const& s : seals)
++                if (s.first == spellInfo->Id)
++                    known = true;
++            if (known)
+                 continue;
+ 
+-            // found, remove seal
+-            caster->RemoveAurasDueToSpell(m_dummyAura->GetId());
++            seals.push_back({ spellInfo->Id, judgementId });
++            if (!firstSeal)
++                firstSeal = spellInfo;
++        }
++
++        if (seals.empty())
++            return;
+ 
+-            // Sanctified Judgement
+-            Unit::AuraList const& m_auras = caster->GetAurasByType(SPELL_AURA_DUMMY);
+-            for (Unit::AuraList::const_iterator i = m_auras.begin(); i != m_auras.end(); ++i)
++        for (auto const& s : seals)
++            caster->RemoveAurasDueToSpell(s.first);
++
++        // Sanctified Judgement (once per Judgement cast)
++        Unit::AuraList const& m_auras = caster->GetAurasByType(SPELL_AURA_DUMMY);
++        for (Unit::AuraList::const_iterator i = m_auras.begin(); i != m_auras.end(); ++i)
++        {
++            if ((*i)->GetSpellProto()->SpellIconID == 205 && (*i)->GetSpellProto()->Attributes == uint64(0x01D0))
+             {
+-                if ((*i)->GetSpellProto()->SpellIconID == 205 && (*i)->GetSpellProto()->Attributes == uint64(0x01D0))
++                int32 chance = (*i)->GetModifier()->m_amount;
++                if (roll_chance_i(chance))
+                 {
+-                    int32 chance = (*i)->GetModifier()->m_amount;
+-                    if (roll_chance_i(chance))
+-                    {
+-                        int32 mana = spellInfo->manaCost;
+-                        if (Player* modOwner = caster->GetSpellModOwner())
+-                            modOwner->ApplySpellMod(spellInfo->Id, SPELLMOD_COST, mana);
+-                        mana = int32(mana * 0.8f);
+-                        caster->CastCustomSpell(nullptr, 31930, &mana, nullptr, nullptr, TRIGGERED_IGNORE_GCD | TRIGGERED_IGNORE_CURRENT_CASTED_SPELL | TRIGGERED_HIDE_CAST_IN_COMBAT_LOG);
+-                    }
+-                    break;
++                    int32 mana = firstSeal->manaCost;
++                    if (Player* modOwner = caster->GetSpellModOwner())
++                        modOwner->ApplySpellMod(firstSeal->Id, SPELLMOD_COST, mana);
++                    mana = int32(mana * 0.8f);
++                    caster->CastCustomSpell(nullptr, 31930, &mana, nullptr, nullptr, TRIGGERED_IGNORE_GCD | TRIGGERED_IGNORE_CURRENT_CASTED_SPELL | TRIGGERED_HIDE_CAST_IN_COMBAT_LOG);
+                 }
++                break;
+             }
+-
+-            break;
+         }
+-        caster->CastSpell(unitTarget, spellId2, TRIGGERED_IGNORE_GCD | TRIGGERED_IGNORE_CURRENT_CASTED_SPELL);
++
++        for (auto const& s : seals)
++            caster->CastSpell(unitTarget, s.second, TRIGGERED_IGNORE_GCD | TRIGGERED_IGNORE_CURRENT_CASTED_SPELL);
+         if (caster->HasAura(37188)) // improved judgement
+             caster->CastSpell(nullptr, 43838, TRIGGERED_OLD_TRIGGERED);
+ 

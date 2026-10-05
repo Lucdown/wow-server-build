@@ -34,6 +34,7 @@ jobs:
         run: |
           set -e
           mkdir -p bin   # install-boost needs this folder to exist
+          git config --global core.autocrlf false   # keep sources byte-exact so our patches apply
           fetch() {  # fetch <repo> <sha> <dir>
             mkdir -p "$3"; cd "$3"
             git init -q
