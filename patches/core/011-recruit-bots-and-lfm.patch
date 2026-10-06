@@ -1,5 +1,5 @@
 diff --git a/src/game/Chat/AlterothCommands.cpp b/src/game/Chat/AlterothCommands.cpp
-index e83b2f7..cca1717 100644
+index e83b2f7..0da251c 100644
 --- a/src/game/Chat/AlterothCommands.cpp
 +++ b/src/game/Chat/AlterothCommands.cpp
 @@ -181,3 +181,446 @@ bool ChatHandler::HandleAlterothTrainerCommand(char* args)
@@ -121,7 +121,7 @@ index e83b2f7..cca1717 100644
 +    // Free random bots of this role/class, closest level first. Bots far from your level get re-made at your level.
 +    std::vector<Player*> AltFindBots(Player* player, uint32 role, uint32 classId, uint32 count, std::vector<Player*> const& skip)
 +    {
-+        std::vector<std::pair<uint32, Player*>> near, far;
++        std::vector<std::pair<uint32, Player*>> closeBots, farBots;
 +#ifdef ENABLE_PLAYERBOTS
 +        sRandomPlayerbotMgr.ForEachPlayerbot([&](Player* bot)
 +        {
@@ -132,16 +132,16 @@ index e83b2f7..cca1717 100644
 +            if (role && AltRoleOf(bot) != role)
 +                return;
 +            uint32 diff = bot->GetLevel() > player->GetLevel() ? bot->GetLevel() - player->GetLevel() : player->GetLevel() - bot->GetLevel();
-+            (diff <= 3 ? near : far).push_back(std::make_pair(diff * 1000 + urand(0, 999), bot));
++            (diff <= 3 ? closeBots : farBots).push_back(std::make_pair(diff * 1000 + urand(0, 999), bot));
 +        });
 +#endif
-+        std::sort(near.begin(), near.end());
-+        std::sort(far.begin(), far.end());
++        std::sort(closeBots.begin(), closeBots.end());
++        std::sort(farBots.begin(), farBots.end());
 +        std::vector<Player*> out;
-+        for (auto& p : near)
++        for (auto& p : closeBots)
 +            if (out.size() < count) out.push_back(p.second);
 +#ifdef ENABLE_PLAYERBOTS
-+        for (auto& p : far)
++        for (auto& p : farBots)
 +        {
 +            if (out.size() >= count)
 +                break;

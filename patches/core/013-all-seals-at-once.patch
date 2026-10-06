@@ -1,0 +1,69 @@
+diff --git a/src/game/Spells/Spell.cpp b/src/game/Spells/Spell.cpp
+index 6bc4b8a..02ec86e 100644
+--- a/src/game/Spells/Spell.cpp
++++ b/src/game/Spells/Spell.cpp
+@@ -47,6 +47,8 @@
+ #include "Spells/Scripts/SpellScript.h"
+ #include "Entities/ObjectGuid.h"
+ #include "Spells/SpellStacking.h"
++#include "Config/Config.h"
++#include <map>
+ 
+ #ifdef ENABLE_PLAYERBOTS
+ #include "playerbot/PlayerbotAI.h"
+@@ -3266,6 +3268,45 @@ void Spell::cancel()
+     }
+ }
+ 
++// Alteroth: casting one seal also puts up every other seal you know (highest rank), in the same global
++// cooldown. Each extra seal still costs its own mana; seals you can't afford are skipped.
++static void AlterothCastAllSeals(Player* player, uint32 castId)
++{
++    static bool enabled = sConfig.GetBoolDefault("Alteroth.SealsTogether", true);
++    if (!enabled)
++        return;
++    uint32 castFirst = sSpellMgr.GetFirstSpellInChain(castId);
++    std::map<uint32, uint32> best; // first rank -> highest known rank
++    for (auto const& itr : player->GetSpellMap())
++    {
++        if (itr.second.state == PLAYERSPELL_REMOVED || itr.second.disabled)
++            continue;
++        SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(itr.first);
++        if (!info || !IsSealSpell(info))
++            continue;
++        uint32 first = sSpellMgr.GetFirstSpellInChain(itr.first);
++        if (first == castFirst)
++            continue;
++        auto b = best.find(first);
++        if (b == best.end() || sSpellMgr.GetSpellRank(itr.first) > sSpellMgr.GetSpellRank(b->second))
++            best[first] = itr.first;
++    }
++    for (auto const& b : best)
++    {
++        SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(b.second);
++        if (!info)
++            continue;
++        uint32 cost = Spell::CalculatePowerCost(info, player);
++        if (info->powerType == POWER_MANA)
++        {
++            if (player->GetPower(POWER_MANA) < cost)
++                continue;
++            player->ModifyPower(POWER_MANA, -int32(cost));
++        }
++        player->CastSpell(player, info, TRIGGERED_OLD_TRIGGERED);
++    }
++}
++
+ SpellCastResult Spell::cast(bool skipCheck)
+ {
+     SetExecutedCurrently(true);
+@@ -3481,6 +3522,9 @@ SpellCastResult Spell::cast(bool skipCheck)
+         handle_immediate();
+     }
+ 
++    if (!m_IsTriggeredSpell && m_caster && m_caster->GetTypeId() == TYPEID_PLAYER && IsSealSpell(m_spellInfo))
++        AlterothCastAllSeals(static_cast<Player*>(m_caster), m_spellInfo->Id);
++
+     m_trueCaster->DecreaseCastCounter();
+     SetExecutedCurrently(false);
+     return SPELL_CAST_OK;
