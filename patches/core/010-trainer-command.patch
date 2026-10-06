@@ -1,0 +1,106 @@
+diff --git a/src/game/Chat/AlterothCommands.cpp b/src/game/Chat/AlterothCommands.cpp
+index 05ce6b2..e83b2f7 100644
+--- a/src/game/Chat/AlterothCommands.cpp
++++ b/src/game/Chat/AlterothCommands.cpp
+@@ -9,6 +9,13 @@
+ #include "Server/Opcodes.h"
+ #include "Groups/Group.h"
+ #include "Util/Util.h"
++#include "Globals/ObjectMgr.h"
++#include "Entities/TemporarySpawn.h"
++#include "Maps/Map.h"
++
++#include <map>
++#include <string>
++#include <cctype>
+ 
+ #include <sstream>
+ 
+@@ -114,3 +121,63 @@ bool ChatHandler::HandleDeathRollCommand(char* args)
+     }
+     return true;
+ }
++
++// .trainer [profession]  - a profession trainer appears next to you for 3 minutes (Alteroth trainers 190200-190213).
++// No name = Master of Trades (every profession). Summoning a new one sends the previous one away.
++bool ChatHandler::HandleAlterothTrainerCommand(char* args)
++{
++    Player* player = m_session ? m_session->GetPlayer() : nullptr;
++    if (!player)
++        return false;
++
++    static const struct { char const* name; uint32 entry; } trainers[] =
++    {
++        { "all", 190200 }, { "alchemy", 190201 }, { "blacksmithing", 190202 }, { "enchanting", 190203 },
++        { "engineering", 190204 }, { "herbalism", 190205 }, { "jewelcrafting", 190206 }, { "leatherworking", 190207 },
++        { "mining", 190208 }, { "skinning", 190209 }, { "tailoring", 190210 }, { "cooking", 190211 },
++        { "firstaid", 190212 }, { "fishing", 190213 },
++    };
++
++    std::string want = (args && *args) ? std::string(args) : std::string("all");
++    std::string clean;
++    for (char c : want)
++        if (c != ' ' && c != '_' && c != '-')
++            clean += char(tolower((unsigned char)c));
++
++    uint32 entry = 0;
++    for (auto const& t : trainers)
++        if (clean.size() >= 3 && std::string(t.name).compare(0, clean.size(), clean) == 0)
++        {
++            entry = t.entry;
++            break;
++        }
++
++    if (!entry || !ObjectMgr::GetCreatureTemplate(entry))
++    {
++        SendSysMessage("Usage: .trainer [all | alchemy | blacksmithing | enchanting | engineering | herbalism | jewelcrafting | "
++                       "leatherworking | mining | skinning | tailoring | cooking | firstaid | fishing]");
++        if (entry)
++            SendSysMessage("That trainer is not in the database yet - run 14_Profession_Trainers.bat first.");
++        SetSentErrorMessage(true);
++        return false;
++    }
++
++    static std::map<uint32, ObjectGuid> lastTrainer;
++    auto it = lastTrainer.find(player->GetGUIDLow());
++    if (it != lastTrainer.end())
++    {
++        if (Creature* old = player->GetMap()->GetCreature(it->second))
++            old->ForcedDespawn();
++        lastTrainer.erase(it);
++    }
++
++    float x, y, z;
++    player->GetClosePoint(x, y, z, 0.0f, 2.0f, 0.0f);
++    float o = player->GetOrientation() + M_PI_F;
++    if (Creature* trainer = player->SummonCreature(entry, x, y, z, o, TEMPSPAWN_TIMED_DESPAWN, 3 * MINUTE * IN_MILLISECONDS))
++    {
++        lastTrainer[player->GetGUIDLow()] = trainer->GetObjectGuid();
++        PSendSysMessage("%s is here for 3 minutes.", trainer->GetName());
++    }
++    return true;
++}
+diff --git a/src/game/Chat/Chat.cpp b/src/game/Chat/Chat.cpp
+index 6719b17..9e051d0 100644
+--- a/src/game/Chat/Chat.cpp
++++ b/src/game/Chat/Chat.cpp
+@@ -1026,6 +1026,7 @@ ChatCommand* ChatHandler::getCommandTable()
+         { "groupgo",        SEC_MODERATOR,      false, &ChatHandler::HandleGroupgoCommand,             "", nullptr },
+         { "commands",       SEC_PLAYER,         true,  &ChatHandler::HandleCommandsCommand,            "", nullptr },
+         { "deathroll",      SEC_PLAYER,         false, &ChatHandler::HandleDeathRollCommand,           "", nullptr },
++        { "trainer",        SEC_PLAYER,         false, &ChatHandler::HandleAlterothTrainerCommand,     "", nullptr },
+         { "demorph",        SEC_GAMEMASTER,     false, &ChatHandler::HandleDeMorphCommand,             "", nullptr },
+         { "die",            SEC_ADMINISTRATOR,  false, &ChatHandler::HandleDieCommand,                 "", nullptr },
+         { "revive",         SEC_ADMINISTRATOR,  true,  &ChatHandler::HandleReviveCommand,              "", nullptr },
+diff --git a/src/game/Chat/Chat.h b/src/game/Chat/Chat.h
+index 6053b7e..fcb1ef0 100644
+--- a/src/game/Chat/Chat.h
++++ b/src/game/Chat/Chat.h
+@@ -837,6 +837,7 @@ class ChatHandler
+         bool HandlePetLevelLoyaltyCommand(char* args);
+         bool HandlePetLearnCommand(char* args);
+         bool HandleDeathRollCommand(char* args);
++        bool HandleAlterothTrainerCommand(char* args);
+         bool HandlePetUnlearnCommand(char* args);
+ 
+         Player*   getSelectedPlayer() const;

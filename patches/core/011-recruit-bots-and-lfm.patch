@@ -1,0 +1,496 @@
+diff --git a/src/game/Chat/AlterothCommands.cpp b/src/game/Chat/AlterothCommands.cpp
+index e83b2f7..cca1717 100644
+--- a/src/game/Chat/AlterothCommands.cpp
++++ b/src/game/Chat/AlterothCommands.cpp
+@@ -181,3 +181,446 @@ bool ChatHandler::HandleAlterothTrainerCommand(char* args)
+     }
+     return true;
+ }
++
++// ---------------------------------------------------------------------------------------------
++// Recruiting: .recruit tank|healer|dps|any [count] | <class> | group | dismiss | go [dungeon] | join
++// plus "LFM" posts in an LFG chat channel that you can answer within a time window.
++// ---------------------------------------------------------------------------------------------
++#ifdef ENABLE_PLAYERBOTS
++#include "playerbot/playerbot.h"
++#include "playerbot/AiFactory.h"
++#include "playerbot/RandomPlayerbotMgr.h"
++#include "playerbot/PlayerbotFactory.h"
++#endif
++#include "Chat/ChannelMgr.h"
++#include "Chat/Channel.h"
++#include "Config/Config.h"
++#include <vector>
++#include <algorithm>
++
++namespace
++{
++    struct AltDungeon { char const* name; char const* key; uint32 map; uint32 minLevel; uint32 maxLevel; };
++
++    AltDungeon const altDungeons[] =
++    {
++        { "Ragefire Chasm", "ragefire", 389, 13, 18 },        { "Wailing Caverns", "wailing", 43, 17, 24 },
++        { "The Deadmines", "deadmines", 36, 17, 26 },         { "Shadowfang Keep", "shadowfang", 33, 22, 30 },
++        { "Blackfathom Deeps", "blackfathom", 48, 24, 32 },   { "The Stockade", "stockade", 34, 24, 32 },
++        { "Gnomeregan", "gnomeregan", 90, 29, 38 },           { "Razorfen Kraul", "kraul", 47, 29, 38 },
++        { "Scarlet Monastery", "scarlet", 189, 34, 45 },      { "Razorfen Downs", "downs", 129, 37, 46 },
++        { "Uldaman", "uldaman", 70, 41, 51 },                 { "Zul'Farrak", "zulfarrak", 209, 44, 54 },
++        { "Maraudon", "maraudon", 349, 46, 55 },              { "Sunken Temple", "sunken", 109, 50, 56 },
++        { "Blackrock Depths", "depths", 230, 52, 60 },        { "Lower Blackrock Spire", "spire", 229, 55, 60 },
++        { "Dire Maul", "dire", 429, 55, 60 },                 { "Scholomance", "scholomance", 289, 58, 60 },
++        { "Stratholme", "stratholme", 329, 58, 60 },          { "Hellfire Ramparts", "ramparts", 543, 59, 63 },
++        { "The Blood Furnace", "furnace", 542, 61, 64 },      { "The Slave Pens", "slave", 547, 62, 65 },
++        { "The Underbog", "underbog", 546, 63, 66 },          { "Mana-Tombs", "mana", 557, 64, 67 },
++        { "Auchenai Crypts", "crypts", 558, 65, 68 },         { "Old Hillsbrad Foothills", "hillsbrad", 560, 66, 69 },
++        { "Sethekk Halls", "sethekk", 556, 67, 70 },          { "The Steamvault", "steamvault", 545, 68, 70 },
++        { "The Shattered Halls", "shattered", 540, 69, 70 },  { "Shadow Labyrinth", "labyrinth", 555, 69, 70 },
++        { "The Botanica", "botanica", 553, 70, 70 },          { "The Mechanar", "mechanar", 554, 70, 70 },
++        { "The Arcatraz", "arcatraz", 552, 70, 70 },          { "The Black Morass", "morass", 269, 70, 70 },
++        { "Magisters' Terrace", "magisters", 585, 70, 70 },
++    };
++
++    enum AltRole { ALT_ROLE_ANY = 0, ALT_ROLE_TANK = 1, ALT_ROLE_HEAL = 2, ALT_ROLE_DPS = 4 };
++
++    struct AltOffer { ObjectGuid bot; int dungeon = -1; time_t expires = 0; };
++    std::map<uint32, AltOffer> altOffers;
++    std::map<uint32, uint32> altLfmTimers;
++    std::map<uint32, int> altLastDungeon;
++
++    std::string AltLower(std::string s)
++    {
++        std::string out;
++        for (char c : s)
++            if (c != ' ' && c != '\'' && c != '-' && c != '_')
++                out += char(tolower((unsigned char)c));
++        return out;
++    }
++
++    uint32 AltRoleOf(Player* p)
++    {
++#ifdef ENABLE_PLAYERBOTS
++        uint32 r = AiFactory::GetPlayerRoles(p);
++        if (r & ALT_ROLE_TANK) return ALT_ROLE_TANK;
++        if (r & ALT_ROLE_HEAL) return ALT_ROLE_HEAL;
++#else
++        (void)p;
++#endif
++        return ALT_ROLE_DPS;
++    }
++
++    char const* AltRoleName(uint32 role)
++    {
++        return role == ALT_ROLE_TANK ? "tank" : role == ALT_ROLE_HEAL ? "healer" : "damage dealer";
++    }
++
++    // Suggested dungeon for a level (random among the ones that fit). -1 if none.
++    int AltPickDungeon(uint32 level, bool random)
++    {
++        std::vector<int> fits;
++        for (int i = 0; i < int(sizeof(altDungeons) / sizeof(altDungeons[0])); ++i)
++            if (level + 1 >= altDungeons[i].minLevel && level <= altDungeons[i].maxLevel + 1)
++                fits.push_back(i);
++        if (fits.empty())
++            return -1;
++        return random ? fits[urand(0, fits.size() - 1)] : fits[0];
++    }
++
++    int AltFindDungeon(std::string const& name)
++    {
++        std::string want = AltLower(name);
++        if (want.size() < 3)
++            return -1;
++        for (int i = 0; i < int(sizeof(altDungeons) / sizeof(altDungeons[0])); ++i)
++            if (AltLower(altDungeons[i].name).find(want) != std::string::npos || std::string(altDungeons[i].key).find(want) == 0)
++                return i;
++        return -1;
++    }
++
++    bool AltIsFree(Player* player, Player* bot)
++    {
++#ifdef ENABLE_PLAYERBOTS
++        return bot && bot != player && bot->IsInWorld() && bot->IsAlive() && !bot->GetGroup() && !bot->isRealPlayer()
++            && bot->GetPlayerbotAI() && sRandomPlayerbotMgr.IsRandomBot(bot)
++            && bot->GetTeam() == player->GetTeam() && !bot->InBattleGround() && !bot->InBattleGroundQueue()
++            && !bot->IsBeingTeleported() && !bot->IsInCombat();
++#else
++        (void)player; (void)bot;
++        return false;
++#endif
++    }
++
++    // Free random bots of this role/class, closest level first. Bots far from your level get re-made at your level.
++    std::vector<Player*> AltFindBots(Player* player, uint32 role, uint32 classId, uint32 count, std::vector<Player*> const& skip)
++    {
++        std::vector<std::pair<uint32, Player*>> near, far;
++#ifdef ENABLE_PLAYERBOTS
++        sRandomPlayerbotMgr.ForEachPlayerbot([&](Player* bot)
++        {
++            if (!AltIsFree(player, bot) || std::find(skip.begin(), skip.end(), bot) != skip.end())
++                return;
++            if (classId && bot->getClass() != classId)
++                return;
++            if (role && AltRoleOf(bot) != role)
++                return;
++            uint32 diff = bot->GetLevel() > player->GetLevel() ? bot->GetLevel() - player->GetLevel() : player->GetLevel() - bot->GetLevel();
++            (diff <= 3 ? near : far).push_back(std::make_pair(diff * 1000 + urand(0, 999), bot));
++        });
++#endif
++        std::sort(near.begin(), near.end());
++        std::sort(far.begin(), far.end());
++        std::vector<Player*> out;
++        for (auto& p : near)
++            if (out.size() < count) out.push_back(p.second);
++#ifdef ENABLE_PLAYERBOTS
++        for (auto& p : far)
++        {
++            if (out.size() >= count)
++                break;
++            PlayerbotFactory factory(p.second, player->GetLevel(), ITEM_QUALITY_UNCOMMON);
++            factory.Randomize(false, false);
++            if (classId == 0 && role && AltRoleOf(p.second) != role)
++                continue; // new talents gave it a different role
++            out.push_back(p.second);
++        }
++#endif
++        return out;
++    }
++
++    Group* AltEnsureGroup(Player* player)
++    {
++        if (Group* g = player->GetGroup())
++            return g;
++        Group* g = new Group();
++        if (!g->Create(player->GetObjectGuid(), player->GetName()))
++        {
++            delete g;
++            return nullptr;
++        }
++        sObjectMgr.AddGroup(g);
++        return g;
++    }
++
++    bool AltAddBot(Player* player, Player* bot)
++    {
++        Group* g = AltEnsureGroup(player);
++        if (!g || g->IsFull() || !g->AddMember(bot->GetObjectGuid(), bot->GetName()))
++            return false;
++#ifdef ENABLE_PLAYERBOTS
++        if (bot->GetPlayerbotAI())
++            bot->GetPlayerbotAI()->Reset(true);
++#endif
++        if (!bot->IsWithinDistInMap(player, 40.0f))
++        {
++            float x, y, z;
++            player->GetClosePoint(x, y, z, bot->GetObjectBoundingRadius(), 2.0f, frand(0, 2 * M_PI_F));
++            bot->TeleportTo(player->GetMapId(), x, y, z, player->GetOrientation());
++        }
++        return true;
++    }
++
++    // Roles the group still needs to be a normal 5-player dungeon group (1 tank, 1 healer, 3 damage).
++    std::vector<uint32> AltMissingRoles(Player* player)
++    {
++        uint32 tanks = 0, heals = 0, members = 0;
++        std::vector<Player*> list;
++        if (Group* g = player->GetGroup())
++        {
++            for (GroupReference* r = g->GetFirstMember(); r; r = r->next())
++                if (Player* m = r->getSource())
++                    list.push_back(m);
++            members = g->GetMembersCount();
++        }
++        else
++        {
++            list.push_back(player);
++            members = 1;
++        }
++        for (Player* m : list)
++        {
++            uint32 role = AltRoleOf(m);
++            if (role == ALT_ROLE_TANK) ++tanks;
++            else if (role == ALT_ROLE_HEAL) ++heals;
++        }
++        std::vector<uint32> need;
++        uint32 free = members < MAX_GROUP_SIZE ? MAX_GROUP_SIZE - members : 0;
++        if (!tanks && free) { need.push_back(ALT_ROLE_TANK); --free; }
++        if (!heals && free) { need.push_back(ALT_ROLE_HEAL); --free; }
++        while (free--) need.push_back(ALT_ROLE_DPS);
++        return need;
++    }
++
++    uint32 AltFillGroup(Player* player, ChatHandler* chat)
++    {
++        uint32 added = 0;
++        std::vector<Player*> used;
++        for (uint32 role : AltMissingRoles(player))
++        {
++            std::vector<Player*> found = AltFindBots(player, role, 0, 1, used);
++            if (found.empty() && role != ALT_ROLE_DPS)
++                found = AltFindBots(player, ALT_ROLE_ANY, 0, 1, used);
++            if (found.empty())
++                continue;
++            used.push_back(found[0]);
++            if (AltAddBot(player, found[0]))
++            {
++                ++added;
++                if (chat)
++                    chat->PSendSysMessage("%s (level %u %s) joined your group.", found[0]->GetName(), found[0]->GetLevel(), AltRoleName(AltRoleOf(found[0])));
++            }
++        }
++        return added;
++    }
++
++    bool AltGoToDungeon(Player* player, int d, ChatHandler* chat)
++    {
++        AreaTrigger const* at = sObjectMgr.GetMapEntranceTrigger(altDungeons[d].map);
++        if (!at)
++        {
++            if (chat) chat->PSendSysMessage("Couldn't find the way into %s.", altDungeons[d].name);
++            return false;
++        }
++        std::vector<Player*> bots;
++        if (Group* g = player->GetGroup())
++            for (GroupReference* r = g->GetFirstMember(); r; r = r->next())
++                if (Player* m = r->getSource())
++                    if (m != player && !m->isRealPlayer())
++                        bots.push_back(m);
++        player->TeleportTo(at->target_mapId, at->target_X, at->target_Y, at->target_Z, at->target_Orientation);
++        for (Player* b : bots)
++            b->TeleportTo(at->target_mapId, at->target_X, at->target_Y, at->target_Z, at->target_Orientation);
++        if (chat) chat->PSendSysMessage("Heading into %s with %u bot(s).", altDungeons[d].name, uint32(bots.size()));
++        return true;
++    }
++
++    void AltSendLfgLine(Player* player, Player* bot, std::string const& text)
++    {
++        ChannelMgr* cMgr = channelMgr(player->GetTeam());
++        if (!cMgr)
++            return;
++        Channel* chan = cMgr->GetJoinChannel("LFG", 0);
++        if (!chan)
++            return;
++        if (!chan->IsOn(player->GetObjectGuid()))
++            chan->Join(player, "");
++        WorldPacket data;
++        ChatHandler::BuildChatPacket(data, CHAT_MSG_CHANNEL, text.c_str(), LANG_UNIVERSAL, bot->GetChatTag(),
++                                     bot->GetObjectGuid(), bot->GetName(), ObjectGuid(), "", "LFG");
++        player->GetSession()->SendPacket(data);
++    }
++}
++
++// Called from Player::Update for real players: every few minutes a bot near your level posts an LFM in the LFG channel.
++void AlterothLfmUpdate(Player* player, uint32 diff)
++{
++    static uint32 minutes = sConfig.GetIntDefault("Alteroth.Lfm.Minutes", 5);
++    static uint32 window = sConfig.GetIntDefault("Alteroth.Lfm.JoinWindow", 180);
++    if (!minutes || !player->isRealPlayer() || !player->IsInWorld())
++        return;
++    uint32& t = altLfmTimers[player->GetGUIDLow()];
++    t += diff;
++    if (t < minutes * MINUTE * IN_MILLISECONDS)
++        return;
++    t = urand(0, 60) * IN_MILLISECONDS; // a little randomness between posts
++
++    if (player->IsInCombat() || player->InBattleGround() || player->GetMap()->IsDungeon())
++        return;
++    if (player->GetGroup() && player->GetGroup()->IsFull())
++        return;
++
++    int d = AltPickDungeon(player->GetLevel(), true);
++    if (d < 0)
++        return;
++    std::vector<Player*> none;
++    std::vector<Player*> leader;
++#ifdef ENABLE_PLAYERBOTS
++    std::vector<std::pair<uint32, Player*>> cands;
++    sRandomPlayerbotMgr.ForEachPlayerbot([&](Player* bot)
++    {
++        if (!AltIsFree(player, bot))
++            return;
++        uint32 diffL = bot->GetLevel() > player->GetLevel() ? bot->GetLevel() - player->GetLevel() : player->GetLevel() - bot->GetLevel();
++        if (diffL <= 3)
++            cands.push_back(std::make_pair(urand(0, 100000), bot));
++    });
++    if (cands.empty())
++        return;
++    std::sort(cands.begin(), cands.end());
++    leader.push_back(cands[0].second);
++#endif
++    if (leader.empty())
++        return;
++    Player* bot = leader[0];
++
++    uint32 need = AltRoleOf(player);
++    uint32 have = urand(1, 3);
++    std::ostringstream msg;
++    static char const* openers[] = { "LFM", "LF%uM", "Need %u more for", "Forming a group for" };
++    char buf[64];
++    snprintf(buf, sizeof(buf), openers[urand(0, 3)], 5 - have);
++    msg << buf << " " << altDungeons[d].name << " - need a " << AltRoleName(need) << "! " << have << "/5, leaving in "
++        << (window / 60) << " min. (Toolkit /gf > Group > Join LFM, or .recruit join)";
++    AltSendLfgLine(player, bot, msg.str());
++
++    AltOffer& o = altOffers[player->GetGUIDLow()];
++    o.bot = bot->GetObjectGuid();
++    o.dungeon = d;
++    o.expires = time(nullptr) + window;
++}
++
++bool ChatHandler::HandleAlterothRecruitCommand(char* args)
++{
++    Player* player = m_session ? m_session->GetPlayer() : nullptr;
++    if (!player)
++        return false;
++#ifndef ENABLE_PLAYERBOTS
++    SendSysMessage("This server was built without bots.");
++    return true;
++#else
++    char* whatArg = ExtractLiteralArg(&args);
++    std::string what = whatArg ? AltLower(whatArg) : "";
++    if (what.empty())
++    {
++        SendSysMessage("Usage: .recruit tank|healer|dps|any [count]  |  .recruit <class>  |  .recruit group  |  .recruit dismiss  |  .recruit go [dungeon]  |  .recruit join");
++        return true;
++    }
++
++    if (what == "dismiss")
++    {
++        Group* g = player->GetGroup();
++        std::vector<ObjectGuid> bots;
++        if (g)
++            for (GroupReference* r = g->GetFirstMember(); r; r = r->next())
++                if (Player* m = r->getSource())
++                    if (m != player && !m->isRealPlayer())
++                        bots.push_back(m->GetObjectGuid());
++        for (ObjectGuid const& guid : bots)
++            if (Group* gg = player->GetGroup())
++                gg->RemoveMember(guid, 0);
++        PSendSysMessage("Sent %u bot(s) on their way.", uint32(bots.size()));
++        return true;
++    }
++
++    if (what == "group")
++    {
++        uint32 n = AltFillGroup(player, this);
++        if (!n)
++            SendSysMessage(player->GetGroup() && player->GetGroup()->IsFull() ? "Your group is already full." : "No free bots found right now - try again in a minute.");
++        return true;
++    }
++
++    if (what == "go")
++    {
++        char* rest = ExtractLiteralArg(&args);
++        int d = rest ? AltFindDungeon(rest) : AltPickDungeon(player->GetLevel(), false);
++        if (d < 0)
++        {
++            SendSysMessage(rest ? "Unknown dungeon. Try part of the name, e.g. .recruit go deadmines" : "No dungeon fits your level.");
++            return true;
++        }
++        AltGoToDungeon(player, d, this);
++        return true;
++    }
++
++    if (what == "join")
++    {
++        auto it = altOffers.find(player->GetGUIDLow());
++        if (it == altOffers.end() || it->second.expires < time(nullptr))
++        {
++            SendSysMessage("No LFM to answer right now (they last 3 minutes). Watch the LFG channel.");
++            return true;
++        }
++        AltOffer o = it->second;
++        altOffers.erase(it);
++        Player* bot = sObjectMgr.GetPlayer(o.bot);
++        if (bot && AltIsFree(player, bot) && AltAddBot(player, bot))
++            PSendSysMessage("%s invited you in.", bot->GetName());
++        AltFillGroup(player, this);
++        altLastDungeon[player->GetGUIDLow()] = o.dungeon;
++        AltGoToDungeon(player, o.dungeon, this);
++        return true;
++    }
++
++    static const struct { char const* name; uint32 id; } classes[] =
++    {
++        { "warrior", CLASS_WARRIOR }, { "paladin", CLASS_PALADIN }, { "hunter", CLASS_HUNTER }, { "rogue", CLASS_ROGUE },
++        { "priest", CLASS_PRIEST }, { "shaman", CLASS_SHAMAN }, { "mage", CLASS_MAGE }, { "warlock", CLASS_WARLOCK }, { "druid", CLASS_DRUID },
++    };
++    uint32 role = 0, classId = 0;
++    if (what == "tank") role = ALT_ROLE_TANK;
++    else if (what == "healer" || what == "heal" || what == "heals") role = ALT_ROLE_HEAL;
++    else if (what == "dps" || what == "damage") role = ALT_ROLE_DPS;
++    else if (what == "any" || what == "buddy") role = ALT_ROLE_ANY;
++    else
++    {
++        for (auto const& c : classes)
++            if (what == c.name)
++                classId = c.id;
++        if (!classId)
++        {
++            SendSysMessage("Unknown option. Use tank, healer, dps, any, a class name, group, dismiss, go or join.");
++            return true;
++        }
++    }
++
++    uint32 count = 1;
++    ExtractOptUInt32(&args, count, 1);
++    count = std::max(1u, std::min(count, 4u));
++
++    std::vector<Player*> none;
++    std::vector<Player*> found = AltFindBots(player, role, classId, count, none);
++    uint32 added = 0;
++    for (Player* bot : found)
++        if (AltAddBot(player, bot))
++        {
++            ++added;
++            PSendSysMessage("%s (level %u %s) joined your group.", bot->GetName(), bot->GetLevel(), AltRoleName(AltRoleOf(bot)));
++        }
++    if (!added)
++        SendSysMessage(player->GetGroup() && player->GetGroup()->IsFull() ? "Your group is full." : "No free bot like that right now - try again in a minute.");
++    return true;
++#endif
++}
+diff --git a/src/game/Chat/Chat.cpp b/src/game/Chat/Chat.cpp
+index 9e051d0..66e5893 100644
+--- a/src/game/Chat/Chat.cpp
++++ b/src/game/Chat/Chat.cpp
+@@ -1027,6 +1027,7 @@ ChatCommand* ChatHandler::getCommandTable()
+         { "commands",       SEC_PLAYER,         true,  &ChatHandler::HandleCommandsCommand,            "", nullptr },
+         { "deathroll",      SEC_PLAYER,         false, &ChatHandler::HandleDeathRollCommand,           "", nullptr },
+         { "trainer",        SEC_PLAYER,         false, &ChatHandler::HandleAlterothTrainerCommand,     "", nullptr },
++        { "recruit",        SEC_PLAYER,         false, &ChatHandler::HandleAlterothRecruitCommand,     "", nullptr },
+         { "demorph",        SEC_GAMEMASTER,     false, &ChatHandler::HandleDeMorphCommand,             "", nullptr },
+         { "die",            SEC_ADMINISTRATOR,  false, &ChatHandler::HandleDieCommand,                 "", nullptr },
+         { "revive",         SEC_ADMINISTRATOR,  true,  &ChatHandler::HandleReviveCommand,              "", nullptr },
+diff --git a/src/game/Chat/Chat.h b/src/game/Chat/Chat.h
+index fcb1ef0..474c983 100644
+--- a/src/game/Chat/Chat.h
++++ b/src/game/Chat/Chat.h
+@@ -838,6 +838,7 @@ class ChatHandler
+         bool HandlePetLearnCommand(char* args);
+         bool HandleDeathRollCommand(char* args);
+         bool HandleAlterothTrainerCommand(char* args);
++        bool HandleAlterothRecruitCommand(char* args);
+         bool HandlePetUnlearnCommand(char* args);
+ 
+         Player*   getSelectedPlayer() const;
+diff --git a/src/game/Entities/Player.cpp b/src/game/Entities/Player.cpp
+index 7f5b8a1..a3d86cb 100644
+--- a/src/game/Entities/Player.cpp
++++ b/src/game/Entities/Player.cpp
+@@ -76,6 +76,8 @@
+ #include "playerbot/PlayerbotAIConfig.h"
+ #endif
+ 
++void AlterothLfmUpdate(Player* player, uint32 diff); // Chat/AlterothCommands.cpp
++
+ #ifdef ENABLE_MODULES
+ #include "ModuleMgr.h"
+ #endif
+@@ -1586,6 +1588,7 @@ void Player::Update(const uint32 diff)
+     }
+ 
+     SendAltPowerUpdate(diff);
++    AlterothLfmUpdate(this, diff);
+ 
+     if (m_deathState == JUST_DIED)
+         KillPlayer();

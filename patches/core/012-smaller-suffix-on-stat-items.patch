@@ -1,0 +1,50 @@
+diff --git a/src/game/Entities/ItemEnchantmentMgr.cpp b/src/game/Entities/ItemEnchantmentMgr.cpp
+index b0915a7..5caf323 100644
+--- a/src/game/Entities/ItemEnchantmentMgr.cpp
++++ b/src/game/Entities/ItemEnchantmentMgr.cpp
+@@ -22,6 +22,7 @@
+ #include "Globals/ObjectMgr.h"
+ #include "Util/ProgressBar.h"
+ #include "Util/Util.h"
++#include "Config/Config.h"
+ 
+ #include <list>
+ #include <vector>
+@@ -115,7 +116,7 @@ uint32 GetItemEnchantMod(uint32 entry)
+     return 0;
+ }
+ 
+-uint32 GenerateEnchSuffixFactor(uint32 item_id)
++static uint32 GenerateEnchSuffixFactorRaw(uint32 item_id)
+ {
+     ItemPrototype const* itemProto = ObjectMgr::GetItemPrototype(item_id);
+ 
+@@ -193,3 +194,28 @@ uint32 GenerateEnchSuffixFactor(uint32 item_id)
+     }
+     return 0;
+ }
++
++// Alteroth: items that already have their own stats get a smaller random suffix on top (Alteroth.SuffixScale,
++// default 0.5), so the bonus is a nice extra instead of doubling the item. Items with no stats of their own keep
++// the full suffix. Small values are left alone so no bonus line ever drops to +0.
++uint32 GenerateEnchSuffixFactor(uint32 item_id)
++{
++    uint32 factor = GenerateEnchSuffixFactorRaw(item_id);
++    if (factor <= 2)
++        return factor;
++
++    ItemPrototype const* itemProto = ObjectMgr::GetItemPrototype(item_id);
++    bool hasOwnStats = false;
++    if (itemProto)
++        for (uint32 i = 0; i < MAX_ITEM_PROTO_STATS; ++i)
++            if (itemProto->ItemStat[i].ItemStatValue != 0)
++                hasOwnStats = true;
++    if (!hasOwnStats)
++        return factor;
++
++    static float scale = sConfig.GetFloatDefault("Alteroth.SuffixScale", 0.5f);
++    if (scale >= 1.0f || scale <= 0.0f)
++        return factor;
++    uint32 scaled = uint32(float(factor) * scale + 0.5f);
++    return scaled < 2 ? 2 : scaled;
++}
