@@ -1,0 +1,8 @@
+## Interface: 20400
+## Title: CleanBars
+## Notes: Clean flat action bars, hover key binding, extra movable bars with auto-filling consumables. /cb
+## Author: Claude for kaspyr
+## Version: 2.0
+## SavedVariablesPerCharacter: CleanBarsDB
+CleanBars.lua
+CleanBarsStyle.lua

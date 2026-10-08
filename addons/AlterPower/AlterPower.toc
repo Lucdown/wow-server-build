@@ -1,0 +1,7 @@
+## Interface: 20400
+## Title: AlterPower
+## Notes: Extra mana / rage / energy bars for every class (Alteroth server). /apower
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariablesPerCharacter: AlterPowerDB
+AlterPower.lua

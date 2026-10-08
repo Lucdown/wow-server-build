@@ -1,0 +1,13 @@
+## Interface: 20400
+## Title: Gear Finder (Toolkit)
+## Notes: Gear search, character tools, buffs, bot control and world tools. /gf to open.
+## Author: Claude for kaspyr
+## Version: 2.0
+## SavedVariables: GearFinderDB
+Data1.lua
+Data2.lua
+Data3.lua
+Data4.lua
+Data5.lua
+Data6.lua
+Core.lua

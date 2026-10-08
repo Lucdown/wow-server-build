@@ -1,0 +1,8 @@
+## Interface: 20400
+## Title: CleanBags
+## Notes: One clean bag window with search, auto-sorting, sell values and gear comparison. /cbag
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariablesPerCharacter: CleanBagsDB
+Prices.lua
+CleanBags.lua

@@ -1,0 +1,7 @@
+## Interface: 20400
+## Title: CleanSkin
+## Notes: Gives tooltips, menus, pop-ups and option windows the same flat dark look as the rest of the Alteroth UI. /cskin off to disable.
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariables: CleanSkinDB
+CleanSkin.lua

@@ -1,0 +1,8 @@
+## Interface: 20400
+## Title: CleanSpellbook
+## Notes: Other Classes page next to the spellbook for spells learned from other classes. /csb
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariablesPerCharacter: CleanSpellbookDB
+ClassSpells.lua
+CleanSpellbook.lua

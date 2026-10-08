@@ -1,0 +1,7 @@
+## Interface: 20400
+## Title: CleanMenu
+## Notes: Modern flat Escape menu with quick buttons. /cmenu off to disable.
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariables: CleanMenuDB
+CleanMenu.lua

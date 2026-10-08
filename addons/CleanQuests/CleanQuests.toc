@@ -1,0 +1,25 @@
+## Interface: 20400
+## Title: CleanQuests
+## Notes: Clean Questie-style quest tracker with map and minimap markers. /cq
+## Author: Claude for kaspyr
+## Version: 1.3
+## SavedVariablesPerCharacter: CleanQuestsDB
+CleanQuests.lua
+QuestData1.lua
+QuestData2.lua
+QuestData3.lua
+QuestData4.lua
+QuestData5.lua
+QuestData6.lua
+QuestData7.lua
+QuestData8.lua
+QuestData9.lua
+GiverData1.lua
+GiverData2.lua
+GiverData3.lua
+GiverData4.lua
+ZoneSizes.lua
+Completed.lua
+CleanQuestsMap.lua
+MobTips.lua
+CleanQuestsTips.lua

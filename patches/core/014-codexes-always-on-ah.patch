@@ -1,0 +1,82 @@
+diff --git a/src/game/AuctionHouseBot/AuctionHouseBot.cpp b/src/game/AuctionHouseBot/AuctionHouseBot.cpp
+index 1ab228e..605f1ef 100644
+--- a/src/game/AuctionHouseBot/AuctionHouseBot.cpp
++++ b/src/game/AuctionHouseBot/AuctionHouseBot.cpp
+@@ -25,6 +25,9 @@
+ #include "Server/DBCEnums.h"
+ #include "SystemConfig.h"
+ #include "World/World.h"
++#include "Config/Config.h"
++#include <set>
++#include <vector>
+ 
+ // Format is YYYYMMDDRR where RR is the change in the conf file
+ // for that day.
+@@ -156,6 +159,58 @@ void AuctionHouseBot::Initialize()
+     }
+ }
+ 
++// Alteroth: every auction house always carries a selection of other-class spell books (codexes 91000-94999)
++// at very high prices. Missing ones are topped up on each selling turn; whatever you buy is
++// replaced by a different book. Alteroth.AH.Tomes = how many per house (0 = off), price = base + per level.
++static void AlterothKeepTomes(AuctionHouseType houseType, AuctionHouseObject* auctionHouse)
++{
++    static uint32 wanted = sConfig.GetIntDefault("Alteroth.AH.Tomes", 30);
++    static uint32 baseGold = sConfig.GetIntDefault("Alteroth.AH.TomeBaseGold", 250);
++    static uint32 perLevelGold = sConfig.GetIntDefault("Alteroth.AH.TomeGoldPerLevel", 40);
++    static std::vector<uint32> pool;
++    if (!wanted || !auctionHouse)
++        return;
++    if (pool.empty())
++    {
++        for (uint32 id = 91000; id <= 94999; ++id)
++                if (ItemPrototype const* proto = ObjectMgr::GetItemPrototype(id))
++                    if (proto->Class == ITEM_CLASS_RECIPE)
++                        pool.push_back(id);
++        if (pool.empty())
++            return;
++    }
++
++    std::set<uint32> listed;
++    AuctionHouseObject::AuctionEntryMapBounds bounds = auctionHouse->GetAuctionsBounds();
++    for (AuctionHouseObject::AuctionEntryMap::const_iterator itr = bounds.first; itr != bounds.second; ++itr)
++    {
++        uint32 entry = itr->second->itemTemplate;
++        if (entry >= 91000 && entry <= 94999)
++            listed.insert(entry);
++    }
++
++    uint32 tries = 0;
++    while (listed.size() < wanted && listed.size() < pool.size() && tries++ < wanted * 4)
++    {
++        uint32 entry = pool[urand(0, pool.size() - 1)];
++        if (listed.count(entry))
++            continue;
++        ItemPrototype const* proto = ObjectMgr::GetItemPrototype(entry);
++        Item* item = proto ? Item::CreateItem(entry, 1) : nullptr;
++        if (!item)
++            continue;
++        uint32 level = proto->RequiredLevel ? proto->RequiredLevel : 1;
++        uint64 gold = uint64(baseGold) + uint64(perLevelGold) * level;
++        uint64 buyout = gold * 10000 * urand(90, 110) / 100;
++        if (buyout > 0x7FFFFFFF)
++            buyout = 0x7FFFFFFF;
++        uint32 bid = uint32(buyout * 9 / 10);
++        auctionHouse->AddAuction(sAuctionHouseStore.LookupEntry(houseType == AUCTION_HOUSE_ALLIANCE ? 1 : (houseType == AUCTION_HOUSE_HORDE ? 6 : 7)),
++                                 item, 48 * HOUR, bid, uint32(buyout));
++        listed.insert(entry);
++    }
++}
++
+ void AuctionHouseBot::Update()
+ {
+     if (++m_houseAction >= MAX_AUCTION_HOUSE_TYPE * 2)
+@@ -163,6 +218,8 @@ void AuctionHouseBot::Update()
+ 
+     AuctionHouseType houseType = AuctionHouseType(m_houseAction % MAX_AUCTION_HOUSE_TYPE);
+     AuctionHouseObject* auctionHouse = sAuctionMgr.GetAuctionsMap(houseType);
++    if (m_houseAction < MAX_AUCTION_HOUSE_TYPE)
++        AlterothKeepTomes(houseType, auctionHouse);
+     if (m_houseAction < MAX_AUCTION_HOUSE_TYPE && urand(0, 99) < m_chanceSell)
+     {
+ 	// Lazy-refresh dynamic level

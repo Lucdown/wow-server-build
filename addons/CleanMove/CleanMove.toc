@@ -1,0 +1,7 @@
+## Interface: 20400
+## Title: CleanMove
+## Notes: Move and resize the action bars, XP bar, unit frames, minimap and more. /move
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariablesPerCharacter: CleanMoveDB
+CleanMove.lua

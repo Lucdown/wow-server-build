@@ -1,0 +1,7 @@
+## Interface: 20400
+## Title: CleanDefaults
+## Notes: Sets sensible defaults once per character (auto loot, 4 action bars, B = bags, target of target...). /defaults to apply again.
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariablesPerCharacter: CleanDefaultsDB
+CleanDefaults.lua

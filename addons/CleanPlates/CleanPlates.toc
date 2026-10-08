@@ -1,0 +1,7 @@
+## Interface: 20400
+## Title: CleanPlates
+## Notes: Clean, readable enemy health bars. /cp
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariables: CleanPlatesDB
+CleanPlates.lua

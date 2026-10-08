@@ -1,0 +1,7 @@
+## Interface: 20400
+## Title: CleanMeter
+## Notes: Damage and healing meter for you, your bots and pets. /cm
+## Author: Claude for kaspyr
+## Version: 1.0
+## SavedVariablesPerCharacter: CleanMeterDB
+CleanMeter.lua
