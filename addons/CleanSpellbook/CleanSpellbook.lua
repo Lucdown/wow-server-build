@@ -93,7 +93,9 @@ local function SetActive(on)
   else
     panel:Hide()
     tab:SetChecked(nil)
-    if SpellBookFrame:IsShown() and SpellBookFrame_Update then SpellBookFrame_Update() end
+    -- put back everything we covered (Blizzard never re-shows these on its own)
+    for _, o in ipairs(BlizzardPieces()) do o:Show() end
+    if SpellBookFrame_Update then SpellBookFrame_Update() end
   end
 end
 
