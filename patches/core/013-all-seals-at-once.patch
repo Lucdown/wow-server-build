@@ -1,5 +1,5 @@
 diff --git a/src/game/Spells/Spell.cpp b/src/game/Spells/Spell.cpp
-index 6bc4b8a..02ec86e 100644
+index 6bc4b8a..4ee1926 100644
 --- a/src/game/Spells/Spell.cpp
 +++ b/src/game/Spells/Spell.cpp
 @@ -47,6 +47,8 @@
@@ -11,7 +11,7 @@ index 6bc4b8a..02ec86e 100644
  
  #ifdef ENABLE_PLAYERBOTS
  #include "playerbot/PlayerbotAI.h"
-@@ -3266,6 +3268,45 @@ void Spell::cancel()
+@@ -3266,6 +3268,72 @@ void Spell::cancel()
      }
  }
  
@@ -38,6 +38,9 @@ index 6bc4b8a..02ec86e 100644
 +        if (b == best.end() || sSpellMgr.GetSpellRank(itr.first) > sSpellMgr.GetSpellRank(b->second))
 +            best[first] = itr.first;
 +    }
++    std::string skipped;
++    std::vector<uint32> tried;
++    tried.push_back(castId);
 +    for (auto const& b : best)
 +    {
 +        SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(b.second);
@@ -47,17 +50,41 @@ index 6bc4b8a..02ec86e 100644
 +        if (info->powerType == POWER_MANA)
 +        {
 +            if (player->GetPower(POWER_MANA) < cost)
++            {
++                skipped += std::string(skipped.empty() ? "" : ", ") + info->SpellName[0];
 +                continue;
++            }
 +            player->ModifyPower(POWER_MANA, -int32(cost));
 +        }
 +        player->CastSpell(player, info, TRIGGERED_OLD_TRIGGERED);
++        tried.push_back(b.second);
 +    }
++
++    // Tell the player what actually ended up active (Alteroth.SealsReport = 0 turns this off)
++    static bool report = sConfig.GetBoolDefault("Alteroth.SealsReport", true);
++    if (!report)
++        return;
++    std::string up, lost;
++    for (uint32 id : tried)
++    {
++        SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(id);
++        if (!info)
++            continue;
++        std::string& list = player->HasAura(id) ? up : lost;
++        list += std::string(list.empty() ? "" : ", ") + info->SpellName[0];
++    }
++    ChatHandler ch(player);
++    ch.PSendSysMessage("Seals up: %s", up.empty() ? "none" : up.c_str());
++    if (!lost.empty())
++        ch.PSendSysMessage("Seals that didn't stay on: %s", lost.c_str());
++    if (!skipped.empty())
++        ch.PSendSysMessage("Seals skipped (not enough mana): %s", skipped.c_str());
 +}
 +
  SpellCastResult Spell::cast(bool skipCheck)
  {
      SetExecutedCurrently(true);
-@@ -3481,6 +3522,9 @@ SpellCastResult Spell::cast(bool skipCheck)
+@@ -3481,6 +3549,9 @@ SpellCastResult Spell::cast(bool skipCheck)
          handle_immediate();
      }
  
